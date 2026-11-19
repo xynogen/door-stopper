@@ -1,8 +1,8 @@
 # Door stopper
 
 <p>
-  <img src="docs/iso.png" alt="Isometric" width="49%">
-  <img src="docs/side.png" alt="Side" width="49%">
+  <img src="docs/iso.png" alt="Isometric" width="400">
+  <img src="docs/side.png" alt="Side" width="400">
 </p>
 
 A 3D-printable door wedge with a Warren truss core, like a bridge, and grip on both faces.
