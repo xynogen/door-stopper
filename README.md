@@ -1,7 +1,9 @@
 # Door stopper
 
-![Isometric](docs/iso.png)
-![Side](docs/side.png)
+<p>
+  <img src="docs/iso.png" alt="Isometric" width="49%">
+  <img src="docs/side.png" alt="Side" width="49%">
+</p>
 
 A 3D-printable door wedge with a Warren truss core, like a bridge, and grip on both faces.
 It is fully parametric: one FreeCAD macro holds every dimension and checks the geometry.
