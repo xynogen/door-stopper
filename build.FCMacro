@@ -1,0 +1,215 @@
+"""Door stopper wedge: strong, grippy, built for abuse.
+
+Profile (XY) is the wedge side view; it is extruded along Z by WIDTH. Print it on its
+side (z = 0 on the bed) so every layer holds the full wedge profile: kicks and door
+slams load the part along the layers, never across them, and the teeth need no support.
+
+  x = 0 tip (goes under the door), x = LENGTH heel. The door pushes the wedge toward +x.
+  y = 0 floor contact (tooth lands), y = HEIGHT heel top.
+
+Run: FreeCADCmd "$PWD/build.FCMacro"   or   python3 build.FCMacro --check
+"""
+import math
+import os
+import sys
+from pathlib import Path
+
+# Retail wedges are ~95-100 long, 40 wide, 15-30 high (motivs DA223, POE DOOR008C).
+LENGTH = 95.0
+HEIGHT = 18.0  # Heel height; covers door gaps up to ~16 mm.
+TIP_H = 2.0  # Blunt tip: a sharp edge would chip and curl.
+WIDTH = 24.0  # Sized in OrcaSlicer to 95 x 18 x 24.
+HEEL_FLAT = 10.0  # Flat top at the heel, a place to kick it in.
+
+# Floor teeth: small sharp ratchet. The steep face points +x, so it bites when the door
+# pushes; the ramp lets the wedge slide in toward the door. Kept subtle on purpose.
+TOOTH_PITCH = 4.0
+TOOTH_DEPTH = 0.4  # ASSUMED: light bite, no floor marks. Raise for thick carpet.
+TOOTH_LAND = 1.5  # Flat contact per tooth, so tile sees no point load.
+TOOTH_MARGIN = 8.0  # Smooth floor contact at the tip and heel.
+
+# Slope ribs, like the reference photo: round scallop grooves across the slope. Soft to the
+# hand and the door, and the groove edges still catch the door edge climbing the slope.
+RIDGE_PITCH = 4.0
+RIDGE_DEPTH = 0.6
+RIDGE_R = 1.6  # Groove radius; groove width = 2*sqrt(2*R*d - d^2), about 2.6 mm.
+RIDGE_START = 15.0  # From the tip; thin tip stays smooth so it slides under the door.
+RIDGE_END = 5.0  # Smooth band before the heel flat, like the reference photo.
+
+FILLET = 3.0  # Heel corners, vertical in print orientation.
+BED_CHAMFER = 0.6  # Both flat sides (bed and top in print).
+
+# Truss core (Warren, like a bridge): two chords along the floor and the slope, zigzag
+# diagonals between them. The windows go through the width, so they print as vertical holes.
+TRUSS_MEMBER = 3.2  # Diagonal width: 8 perimeters of a 0.4 mm nozzle.
+TRUSS_CHORD = 2.4  # Solid skin under the teeth and under the ridges.
+TRUSS_START = 32.0  # Thin end ahead of this stays solid: it takes the door edge.
+TRUSS_PANELS = 4
+TRUSS_WINDOW_R = 1.5  # Window corner radius; sharp corners crack under impact.
+TRUSS_END_WALL = 5.0  # Solid heel wall, the kick face.
+
+DIR = Path(__file__).resolve().parent
+OUT = DIR / "out"
+NAME = "door-stopper"
+
+
+def slope_y(x):
+    run = LENGTH - HEEL_FLAT
+    return TIP_H + (HEIGHT - TIP_H) * min(x, run) / run
+
+
+def profile():
+    """Closed polygon, counter-clockwise: floor teeth tip->heel, then heel, then slope heel->tip."""
+    pts = [(0.0, 0.0)]
+    # Floor: grooves cut up into the body; lands sit on y = 0.
+    x = TOOTH_MARGIN
+    while x + TOOTH_PITCH <= LENGTH - TOOTH_MARGIN:
+        ramp = TOOTH_PITCH - TOOTH_LAND
+        pts += [(x, 0.0), (x, TOOTH_DEPTH), (x + ramp, 0.0)]  # Vertical face at x, ramp to next land.
+        x += TOOTH_PITCH
+    pts += [(LENGTH, 0.0), (LENGTH, HEIGHT), (LENGTH - HEEL_FLAT, HEIGHT)]
+    pts += [(0.0, TIP_H)]
+    return pts
+
+
+def ridge_xs():
+    """Slope groove centres, heel -> tip."""
+    xs, x = [], LENGTH - HEEL_FLAT - RIDGE_END
+    while x >= RIDGE_START:
+        xs.append(x)
+        x -= RIDGE_PITCH
+    return xs
+
+
+def check_profile():
+    pts = profile()
+    angle = math.degrees(math.atan((HEIGHT - TIP_H) / (LENGTH - HEEL_FLAT)))
+    assert 8 <= angle <= 15, f"slope {angle:.1f} deg: steeper slips, flatter will not reach the gap"
+    assert len(set(pts)) == len(pts), "duplicate profile vertex"
+    assert TOOTH_DEPTH < TIP_H * 2 and RIDGE_DEPTH < TIP_H, "teeth would cut through the thin end"
+    assert slope_y(TOOTH_MARGIN) - TOOTH_DEPTH > 1.5, "tip too thin over the first groove"
+    teeth = sum(1 for p in pts if p[1] == TOOTH_DEPTH)
+    ridges = len(ridge_xs())
+    assert teeth >= 10 and ridges >= 10, (teeth, ridges)
+    print(f"PASS: slope {angle:.1f} deg, {teeth} floor teeth, {ridges} slope ridges")
+    return teeth
+
+
+def inradius(t):
+    (ax, ay), (bx, by), (cx, cy) = t
+    area = abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2
+    return 2 * area / (math.dist(t[0], t[1]) + math.dist(t[1], t[2]) + math.dist(t[2], t[0]))
+
+
+def truss_triangles():
+    """Warren truss: zigzag of member centre lines between the floor and slope chords."""
+    half = TRUSS_MEMBER / 2
+    bot = TOOTH_DEPTH + TRUSS_CHORD - half
+    top = lambda x: slope_y(x) - RIDGE_DEPTH - TRUSS_CHORD + half
+    x1 = LENGTH - TRUSS_END_WALL - half
+    xs = [TRUSS_START + (x1 - TRUSS_START) * i / TRUSS_PANELS for i in range(TRUSS_PANELS + 1)]
+    up = lambda i: (TRUSS_PANELS - i) % 2 == 0  # Heel node on the top chord.
+    node = lambda i, u: (xs[i], top(xs[i]) if u else bot)
+    zig = [node(i, up(i)) for i in range(TRUSS_PANELS + 1)]
+    tris = [zig[k:k + 3] for k in range(TRUSS_PANELS - 1)]
+    tris.append([node(0, not up(0)), zig[0], zig[1]])  # End posts.
+    tris.append([zig[-2], zig[-1], node(TRUSS_PANELS, not up(TRUSS_PANELS))])
+    return tris
+
+
+def truss_holes(Part, V):
+    """Window faces: triangles shrunk by half a member, corners rounded. Too-small ones dropped."""
+    half = TRUSS_MEMBER / 2
+    holes = []
+    for t in truss_triangles():
+        if inradius(t) < half + TRUSS_WINDOW_R + 0.5:
+            continue
+        p = [V(x, y, 0) for x, y in t]
+        f = Part.Face(Part.makePolygon(p + p[:1]))
+        holes.append(f.makeOffset2D(-(half + TRUSS_WINDOW_R), 2).makeOffset2D(TRUSS_WINDOW_R, 0))
+    return holes
+
+
+def build():
+    import FreeCAD as App
+    import Mesh
+    import Part
+
+    teeth = check_profile()
+    V = App.Vector
+    pts = [V(x, y, 0) for x, y in profile()]
+    face = Part.Face(Part.makePolygon(pts + pts[:1]))
+    solid = face.extrude(V(0, 0, WIDTH))
+
+    # Vertical (print Z) edges at the heel corners and tip.
+    def z_edges_at(xys):
+        return [e for e in solid.Edges
+                if abs(e.BoundBox.ZLength - WIDTH) < 1e-6
+                and any(abs(e.Vertexes[0].X - x) < 1e-6 and abs(e.Vertexes[0].Y - y) < 1e-6 for x, y in xys)]
+
+    heel = z_edges_at([(LENGTH, 0.0), (LENGTH, HEIGHT), (LENGTH - HEEL_FLAT, HEIGHT)])
+    assert len(heel) == 3, len(heel)
+    solid = solid.makeFillet(FILLET, heel)
+    tip = z_edges_at([(0.0, 0.0), (0.0, TIP_H)])
+    assert len(tip) == 2, len(tip)
+    solid = solid.makeFillet(0.8, tip)
+
+    # Slope grooves: cylinders along the print Z axis, so each scallop prints as a clean wall.
+    run, rise = LENGTH - HEEL_FLAT, HEIGHT - TIP_H
+    n = V(-rise, run, 0).normalize()  # Outward slope normal.
+    for x in ridge_xs():
+        c = V(x, slope_y(x), 0) + n * (RIDGE_R - RIDGE_DEPTH)
+        solid = solid.cut(Part.makeCylinder(RIDGE_R, WIDTH + 2, c + V(0, 0, -1)))
+
+    # Truss: windows through the width (vertical holes in print orientation, no support).
+    holes = truss_holes(Part, V)
+    assert len(holes) >= TRUSS_PANELS, f"only {len(holes)} truss windows survived the rounding"
+    for h in holes:
+        solid = solid.cut(h.extrude(V(0, 0, WIDTH + 2)).translate(V(0, 0, -1)))
+
+    # Bed and top faces in print orientation: chamfer every perimeter edge.
+    flat = [e for e in solid.Edges if e.BoundBox.ZLength < 1e-6]
+    solid = solid.makeChamfer(BED_CHAMFER, flat)
+
+    # Checks.
+    assert solid.isValid() and len(solid.Solids) == 1
+    bb = solid.BoundBox
+    assert abs(bb.XLength - LENGTH) < 1e-6 and abs(bb.YLength - HEIGHT) < 1e-6 and abs(bb.ZLength - WIDTH) < 1e-6, bb
+    assert abs(bb.ZMin) < 1e-6, "print face must sit on z = 0"
+    zm = WIDTH / 2
+    groove_x = TOOTH_MARGIN + 0.2  # Just past the first vertical tooth face.
+    assert not solid.isInside(V(groove_x, TOOTH_DEPTH * 0.5, zm), 1e-3, False), "floor groove missing"
+    assert solid.isInside(V(LENGTH - 2, HEIGHT / 2, zm), 1e-3, False), "heel wall not solid"
+    gx = ridge_xs()[0]
+    assert not solid.isInside(V(gx, slope_y(gx) - RIDGE_DEPTH / 2, zm), 1e-3, False), "slope groove missing"
+    assert solid.isInside(V(TRUSS_START / 2, 1.5, zm), 1e-3, False), "thin end not solid"
+    for h in holes:
+        c = h.CenterOfMass
+        assert not solid.isInside(V(c.x, c.y, zm), 1e-3, False), "truss window missing"
+    ratio = solid.Volume / (face.Area * WIDTH)
+    assert 0.45 < ratio < 0.85, f"solid fraction {ratio:.2f}: truss too thin or no truss"
+    assert not solid.isInside(V(LENGTH - 0.3, HEIGHT - 0.3, zm), 1e-3, False), "heel fillet missing"
+    assert not solid.isInside(V(LENGTH / 2, 0.15, 0.15), 1e-3, False), "bed chamfer missing"
+
+    OUT.mkdir(exist_ok=True)
+    doc = App.newDocument("DoorStopper")
+    doc.addObject("Part::Feature", "Wedge").Shape = solid
+    doc.recompute()
+    out = OUT / NAME
+    for suffix, write in ((".FCStd", lambda p: doc.saveAs(p)),
+                          (".step", solid.exportStep),
+                          (".stl", lambda p: Mesh.Mesh(solid.tessellate(0.05)).write(p))):
+        tmp = str(out) + ".tmp" + suffix
+        write(tmp)
+        os.replace(tmp, str(out.with_suffix(suffix)))
+    mesh = Mesh.Mesh(str(out.with_suffix(".stl")))
+    assert mesh.isSolid() and not mesh.hasNonManifolds(), "bad STL"
+    App.closeDocument(doc.Name)
+    print(f"PASS: {NAME} volume {solid.Volume / 1000:.1f} cm^3, bbox {bb.XLength:g} x {bb.YLength:g} x {bb.ZLength:g}, {teeth} teeth")
+
+
+if __name__ == "__main__":
+    if "--check" in sys.argv:
+        check_profile()
+    else:
+        build()
