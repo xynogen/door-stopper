@@ -53,8 +53,3 @@ grip depth and truss member width too.
 ## Downloads
 
 STL, STEP and FCStd are attached to each [release](../../releases).
-
-## Not validated
-
-Real-floor grip, impact strength and long-term wear are untested. `TOOTH_DEPTH` (0.4 mm)
-is a guess: raise it if the wedge slips on tile, or print in TPU.
