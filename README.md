@@ -54,4 +54,9 @@ grip depth and truss member width too.
 
 ## Downloads
 
-STL, STEP and FCStd are attached to each [release](../../releases).
+STL, STEP and FCStd are attached to each [release](../../releases). Pushing a `v*`
+tag builds them in CI from `build.FCMacro`.
+
+## License
+
+[MIT](LICENSE)
